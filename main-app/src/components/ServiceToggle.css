@@ -1,0 +1,66 @@
+.toggle-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #1a1a2e;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.2s;
+}
+
+.toggle-container:hover {
+    border-color: #4a4a7a;
+}
+
+.toggle-label {
+    font-weight: 600;
+    font-size: 14px;
+    color: #e0e0e0;
+    min-width: 120px;
+}
+
+.toggle-switch {
+    width: 44px;
+    height: 24px;
+    background: #3a3a5a;
+    border-radius: 12px;
+    position: relative;
+    transition: background 0.25s;
+}
+
+.toggle-switch.active {
+    background: #3b82f6;
+}
+
+.toggle-knob {
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    transition: transform 0.25s;
+}
+
+.toggle-switch.active .toggle-knob {
+    transform: translateX(20px);
+}
+
+.toggle-status {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.toggle-status.on {
+    color: #22c55e;
+}
+
+.toggle-status.off {
+    color: #888;
+}
