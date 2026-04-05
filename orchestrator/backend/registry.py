@@ -222,3 +222,50 @@ def get_adapter(name: str, version: Optional[str] = None) -> Optional[dict]:
             if version is None or adapter.get("version") == version:
                 return adapter
     return None
+
+def get_adapter_profiles_for_discovery() -> list:
+    """
+    Return adapter entries formatted as rich Technical Profiles
+    for the adapter discovery engine.
+    
+    Each profile is a "resume" that the LLM uses to match
+    against SOW requirements.
+    """
+    registry = _ensure_registry_exists()
+    adapters = registry["adapters"]
+
+    profiles = []
+    for adapter in adapters:
+        profile = {
+            # Functional Capabilities
+            "name": adapter.get("name", ""),
+            "description": adapter.get("description", ""),
+            "category": adapter.get("category", "General"),
+            "provider": adapter.get("provider", adapter.get("name", "")),
+            "supported_actions": adapter.get("supported_actions", []),
+
+            # Technical Interface
+            "technical_interface": adapter.get("technical_interface", {
+                "protocol": "REST",
+                "method": "POST",
+                "authentication_methods": [],
+                "available_versions": [
+                    {"version": adapter.get("version", "1.0"), "status": "stable"}
+                ],
+            }),
+
+            # Data Schema
+            "data_schema": adapter.get("data_schema", {
+                "mandatory_fields": adapter.get("expected_request_fields", []),
+                "optional_fields": [],
+                "output_structure": adapter.get("expected_response_fields", []),
+            }),
+
+            # Connection
+            "target_endpoint": adapter.get("target_endpoint", ""),
+            "credential_reference": adapter.get("credential_reference", ""),
+            "version": adapter.get("version", ""),
+        }
+        profiles.append(profile)
+
+    return profiles

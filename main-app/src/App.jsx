@@ -72,6 +72,18 @@ function App() {
     setResponses(results)
     setLoading(false)
   }
+
+  const handleResetConfigs = async () => {
+    if (!confirm('Delete all deployed configs from middleware?')) return
+    try {
+      const res = await fetch('http://localhost:8003/api/orchestrator/reset-configs', { method: 'POST' })
+      const data = await res.json()
+      alert(`Cleared ${data.count} config(s): ${data.deleted.join(', ') || 'none found'}`)
+    } catch (err) {
+      alert(`Reset failed: ${err.message}`)
+    }
+  }
+
   return (
     <div className="app-container">
       <h1 className="app-title">FinSpark Integration Tester</h1>
@@ -95,6 +107,9 @@ function App() {
         loading={loading}
         disabled={loading}
       />
+      <button className="btn-reset" onClick={handleResetConfigs}>
+        Reset Configs
+      </button>
       {error && <p className="error-text">{error}</p>}
       {responses.length > 0 && <ResponsePanel responses={responses} />}
     </div>

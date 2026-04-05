@@ -41,3 +41,19 @@ body {
   color: #ef4444;
   font-size: 13px;
 }
+
+.btn-reset {
+  margin-top: 12px;
+  padding: 8px 16px;
+  background: #dc2626;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-reset:hover {
+  background: #b91c1c;
+}

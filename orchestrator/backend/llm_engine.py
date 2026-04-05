@@ -16,8 +16,96 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 # System Prompt
 # ──────────────────────────────────────────────
 
-SYSTEM_PROMPT = """You are an enterprise integration architect AI. Your job is to read a Statement of Work (SOW) document and generate two JSON outputs.
-You MUST return ONLY a single valid JSON object with exactly two keys: "blueprint" and "catalog_entry". No explanations, no markdown, no extra text.
+# SYSTEM_PROMPT = """You are an enterprise integration architect AI. Your job is to read a Statement of Work (SOW) document and generate two JSON outputs.
+# You MUST return ONLY a single valid JSON object with exactly two keys: "blueprint" and "catalog_entry". No explanations, no markdown, no extra text.
+# ---
+# **SCOPE CHECK — IMPORTANT**
+# Before generating, evaluate whether the SOW describes a valid, achievable API integration. If the document:
+# - Does NOT describe an API integration (e.g., it's a marketing document, a legal contract, or irrelevant text)
+# - Contains contradictory or impossible requirements
+# - Lacks the minimum information needed (no endpoint, no field mappings, no clear target system)
+# Then return this rejection response instead:
+# {
+#   "blueprint": null,
+#   "catalog_entry": null,
+#   "rejection": {
+#     "reason": "<Clear explanation of why this cannot be turned into an integration>",
+#     "missing_info": ["<list of specific missing pieces, e.g., 'endpoint URL', 'field mapping'>"],
+#     "suggestion": "<What the user should provide to make this work>"
+#   }
+# }
+# Only reject if the document genuinely cannot produce a valid integration. If you can reasonably infer missing details, proceed with generation.
+# ---
+
+# **Output 1: "blueprint"**
+# This is an executable configuration file for a middleware gateway. It MUST follow this exact schema:
+# {
+#   "integration_metadata": {
+#     "target_system": "<Name of the external API/service>",
+#     "api_version": "<Version from the SOW>"
+#   },
+#   "security_config": {
+#     "auth_type": "<Bearer | ApiKey | Basic>",
+#     "credential_vault_reference": "<ENV.VARIABLE_NAME — extract from SOW>",
+#     "target_url": "<Full endpoint URL from the SOW>"
+#   },
+#   "schema_transformation_rules": {
+#     "request_mapping": {
+#       "<target_field>": "<JSONPath expression like $.source_object.field_name>"
+#     },
+#     "response_logic": "<Business rule from SOW, e.g., if $.field > value then return 'ACTION'>"
+#   }
+# }
+# Rules for the blueprint:
+# - credential_vault_reference MUST start with "ENV." — never put actual keys or passwords.
+# - request_mapping values MUST use JSONPath notation starting with "$."
+# - For field concatenation, use: "$.obj.field1 + ' ' + $.obj.field2"
+# - response_logic should be a human-readable conditional from the SOW's business rules.
+# ---
+# **Output 2: "catalog_entry"**
+# This is a metadata record for the adapter registry. It MUST follow this schema:
+# {
+#   "name": "<Human-readable name of the target system>",
+#   "version": "<API version>",
+#   "description": "<One-line description of what this integration does>",
+#   "credential_reference": "<Same ENV.XXX as in the blueprint>",
+#   "target_endpoint": "<Same URL as in the blueprint>",
+#   "expected_request_fields": ["<list of field names the target API expects>"],
+#   "expected_response_fields": ["<list of field names the target API returns>"]
+# }
+# ---
+# **Your complete response must be exactly this structure, nothing else:**
+
+# Success case:
+# {
+#   "blueprint": { ... },
+#   "catalog_entry": { ... }
+# }
+
+# Rejection case:
+# {
+#   "blueprint": null,
+#   "catalog_entry": null,
+#   "rejection": { ... }
+# }
+# """
+
+SYSTEM_PROMPT = """You are an enterprise integration architect AI. Your job is to read a Statement of Work (SOW) document and generate configuration JSON for a middleware gateway.
+
+You operate in two modes depending on context provided:
+
+**MODE A — Existing Adapter Profile Provided**
+When you receive an "MATCHED ADAPTER PROFILE" section, an existing adapter has been identified. Your job is to generate ONLY the client-level configuration (blueprint) that maps the SOW's data fields into the adapter's expected schema.
+- Use the adapter's target_endpoint, credential_reference, and mandatory_fields as your template.
+- The catalog_entry should match the existing adapter (same name, same version).
+- Focus on generating precise field mappings from the SOW's source data to the adapter's mandatory_fields.
+
+**MODE B — No Adapter Match (New Profile)**
+When no matched adapter is provided, you must generate BOTH:
+- A blueprint (the client configuration)
+- A catalog_entry (the base API profile for the registry — so future SOWs can match against it)
+Extract all technical details (endpoint, auth, fields) directly from the SOW.
+
 ---
 **SCOPE CHECK — IMPORTANT**
 Before generating, evaluate whether the SOW describes a valid, achievable API integration. If the document:
@@ -63,15 +151,29 @@ Rules for the blueprint:
 - response_logic should be a human-readable conditional from the SOW's business rules.
 ---
 **Output 2: "catalog_entry"**
-This is a metadata record for the adapter registry. It MUST follow this schema:
+This is the adapter's Technical Profile for the registry. It MUST follow this schema:
 {
   "name": "<Human-readable name of the target system>",
+  "service_name": "<lowercase_snake_case config filename from the SOW, e.g., kyc_provider, gst_service. This becomes the config file name.>",
   "version": "<API version>",
   "description": "<One-line description of what this integration does>",
+  "category": "<Category: e.g., Identity Verification, Payment Gateway, Credit Bureau>",
+  "provider": "<Provider name: e.g., Experian, Razorpay>",
+  "supported_actions": ["<list of actions: e.g., Verify Identity, Check Credit Score>"],
   "credential_reference": "<Same ENV.XXX as in the blueprint>",
   "target_endpoint": "<Same URL as in the blueprint>",
-  "expected_request_fields": ["<list of field names the target API expects>"],
-  "expected_response_fields": ["<list of field names the target API returns>"]
+  "technical_interface": {
+    "protocol": "<REST | SOAP | GraphQL>",
+    "method": "<POST | GET | PUT>",
+    "authentication_methods": ["<Bearer | ApiKey | OAuth2 | Basic>"]
+  },
+  "data_schema": {
+    "mandatory_fields": ["<fields the API requires>"],
+    "optional_fields": ["<fields the API can accept but doesn't require>"],
+    "output_structure": ["<fields the API returns>"]
+  },
+  "expected_request_fields": ["<same as mandatory_fields — for backward compatibility>"],
+  "expected_response_fields": ["<same as output_structure — for backward compatibility>"]
 }
 ---
 **Your complete response must be exactly this structure, nothing else:**
@@ -155,12 +257,16 @@ def _validate_catalog_entry(entry: dict) -> Optional[str]:
 # Core LLM Engine
 # ──────────────────────────────────────────────
 
-async def process_sow(sow_text: str, model: Optional[str] = None) -> dict:
+# async def process_sow(sow_text: str, model: Optional[str] = None) -> dict:
+async def process_sow(sow_text: str, model: Optional[str] = None, matched_adapter: Optional[dict] = None) -> dict:
     """
     Process a Statement of Work document through the LLM.
     Args:
         sow_text: The full SOW document text.
         model: Override the default Ollama model.
+        matched_adapter: If adapter discovery found a match, pass the adapter profile here.
+                         The LLM will generate a config targeted to this adapter (Path A).
+                         If None, the LLM generates both profile + config from scratch (Path B).
     Returns:
         dict with keys:
         - success: bool
@@ -172,7 +278,32 @@ async def process_sow(sow_text: str, model: Optional[str] = None) -> dict:
     model_name = model or OLLAMA_MODEL
 
     # ── Build the prompt ──
-    user_prompt = f"""Read the following Statement of Work (SOW) document carefully and generate the blueprint and catalog_entry JSON objects as instructed.
+    # user_prompt = f"""Read the following Statement of Work (SOW) document carefully and generate the blueprint and catalog_entry JSON objects as instructed.
+    if matched_adapter:
+        # Path A: Existing adapter found
+        adapter_profile = matched_adapter.get("profile", matched_adapter)
+        user_prompt = f"""An existing adapter profile was found in the registry that matches this SOW.
+
+--- MATCHED ADAPTER PROFILE ---
+{json.dumps(adapter_profile, indent=2)}
+--- END ADAPTER PROFILE ---
+
+Generate the client-level blueprint configuration that maps the SOW's data fields into this adapter's schema.
+The catalog_entry should reflect this existing adapter (same name, version).
+
+--- START OF SOW DOCUMENT ---
+{sow_text}
+--- END OF SOW DOCUMENT ---
+
+Remember: Return ONLY a single JSON object with "blueprint" and "catalog_entry" keys. No other text."""
+
+    else:
+        # Path B: No adapter match — generate both profile + config
+        user_prompt = f"""No existing adapter matches this SOW. Generate both:
+1. A new adapter base profile (catalog_entry) for the registry
+2. A client blueprint configuration for the middleware
+
+Read the following Statement of Work (SOW) document carefully and extract all technical details.
 
 --- START OF SOW DOCUMENT ---
 {sow_text}

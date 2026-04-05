@@ -49,19 +49,39 @@ class DeploymentResult:
 # Config Deployment (to Middleware)
 # ──────────────────────────────────────────────
 
+# def _sanitize_service_name(name: str) -> str:
+#     """
+#     Convert a service name into a safe filename.
+#     'KYC Provider' → 'kyc_provider'
+#     'GST Service v2.0' → 'gst_service_v2_0'
+#     """
+#     safe = name.lower().strip()
+#     safe = safe.replace(" ", "_")
+#     safe = safe.replace(".", "_")
+#     safe = safe.replace("-", "_")
+#     # Remove any characters that aren't alphanumeric or underscores
+#     safe = "".join(c for c in safe if c.isalnum() or c == "_")
+#     # Collapse multiple underscores
+#     while "__" in safe:
+#         safe = safe.replace("__", "_")
+#     return safe.strip("_")
+
 def _sanitize_service_name(name: str) -> str:
     """
     Convert a service name into a safe filename.
+    Strips version suffixes so filenames match what consumers expect.
     'KYC Provider' → 'kyc_provider'
-    'GST Service v2.0' → 'gst_service_v2_0'
+    'KYC Provider v1.0' → 'kyc_provider'
+    'GST Service v2.0' → 'gst_service'
     """
-    safe = name.lower().strip()
+    import re
+    # Strip trailing version info (v1.0, v2, 1.0, etc.)
+    safe = re.sub(r'\s*v?\d+[\.\d]*\s*$', '', name, flags=re.IGNORECASE)
+    safe = safe.lower().strip()
     safe = safe.replace(" ", "_")
     safe = safe.replace(".", "_")
     safe = safe.replace("-", "_")
-    # Remove any characters that aren't alphanumeric or underscores
     safe = "".join(c for c in safe if c.isalnum() or c == "_")
-    # Collapse multiple underscores
     while "__" in safe:
         safe = safe.replace("__", "_")
     return safe.strip("_")
@@ -155,14 +175,27 @@ def split_deploy(
         service_name: Optional override for the config filename.
                       If not provided, derives it from catalog_entry['name'].
     """
-    # Derive service_name from catalog entry if not provided
+    # # Derive service_name from catalog entry if not provided
+    # if not service_name:
+    #     adapter_name = catalog_entry.get("name", "")
+    #     if not adapter_name:
+    #         return DeploymentResult(
+    #             success=False,
+    #             config_status="error",
+    #             config_message="Cannot determine service name: no service_name provided and catalog_entry has no 'name'.",
+    #         )
+    #     service_name = _sanitize_service_name(adapter_name)
+
+    # Derive service_name: prefer catalog_entry.service_name, then param, then fallback to sanitized name
+    if not service_name:
+        service_name = catalog_entry.get("service_name")
     if not service_name:
         adapter_name = catalog_entry.get("name", "")
         if not adapter_name:
             return DeploymentResult(
                 success=False,
                 config_status="error",
-                config_message="Cannot determine service name: no service_name provided and catalog_entry has no 'name'.",
+                config_message="Cannot determine service name: no service_name in catalog_entry and no 'name' field.",
             )
         service_name = _sanitize_service_name(adapter_name)
 

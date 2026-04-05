@@ -3,6 +3,7 @@ import SowInput from './components/SowInput'
 import BlueprintPreview from './components/BlueprintPreview'
 import SimulationView from './components/SimulationView'
 import StatusBar from './components/StatusBar'
+// import SmartRoute from './components/SmartRoute'
 import './App.css'
 
 const API_BASE = 'http://localhost:8003/api/orchestrator'
@@ -31,6 +32,7 @@ const SAMPLE_PAYLOADS = {
 function App() {
   // Workflow state: "input" | "preview" | "simulate" | "deployed"
   const [step, setStep] = useState('input')
+  const [mode, setMode] = useState('pipeline')  // 'pipeline' | 'smartroute'
 
   // Data
   const [sowText, setSowText] = useState('')
@@ -40,6 +42,7 @@ function App() {
   const [deployResult, setDeployResult] = useState(null)
   const [simResult, setSimResult] = useState(null)
   const [uploadedFiles, setUploadedFiles] = useState([])
+  const [discoveryResult, setDiscoveryResult] = useState(null)
 
   // Edited versions from preview
   const [editedBlueprint, setEditedBlueprint] = useState(null)
@@ -136,6 +139,9 @@ function App() {
       setBlueprint(data.blueprint)
       setCatalogEntry(data.catalog_entry)
       setModelUsed(data.model_used || '')
+      if (data.discovery) {
+        setDiscoveryResult(data.discovery)
+      }
       setStep('preview')
     } catch (err) {
       setError(`Network error: ${err.message}`)
@@ -231,6 +237,7 @@ function App() {
     setDeployResult(null)
     setSimResult(null)
     setError(null)
+    setDiscoveryResult(null)
   }
 
   return (
@@ -238,11 +245,33 @@ function App() {
       <header className="app-header">
         <h1 className="app-title">ZeroOne AI Orchestrator</h1>
         <p className="app-subtitle">
+          {/* {mode === 'pipeline'
+            ? 'Upload SOW → Generate → Simulate → Deploy'
+            : 'Paste payload → AI picks the right adapter → Execute'
+          } */}
           Upload SOW → Generate → Simulate → Deploy
         </p>
         <StatusBar ollamaStatus={ollamaStatus} registryCount={registryCount} />
       </header>
-
+      {/* Mode Toggle */}
+      {/* <div className="mode-toggle">
+        <button
+          className={`mode-btn ${mode === 'pipeline' ? 'active' : ''}`}
+          onClick={() => setMode('pipeline')}
+        >
+          🔧 Pipeline Mode
+        </button>
+        <button
+          className={`mode-btn ${mode === 'smartroute' ? 'active' : ''}`}
+          onClick={() => setMode('smartroute')}
+        >
+          🧠 Smart Route
+        </button>
+      </div> */}
+      {/* {mode === 'smartroute' ? (
+        <SmartRoute />
+      ) : ( */}
+      {/* <> */}
       {/* Step Indicator */}
       <div className="step-indicator">
         {['input', 'preview', 'simulate', 'deployed'].map((s, i) => {
@@ -253,7 +282,6 @@ function App() {
           let cls = ''
           if (thisIdx === currentIdx) cls = 'active'
           else if (thisIdx < currentIdx) cls = 'done'
-
           return (
             <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < 3 ? 1 : undefined }}>
               <div className={`step-dot ${cls}`}>
@@ -264,9 +292,7 @@ function App() {
           )
         })}
       </div>
-
       {error && <div className="error-banner">{error}</div>}
-
       {/* Step 1: Input */}
       {step === 'input' && (
         <SowInput
@@ -278,7 +304,6 @@ function App() {
           onFilesChange={setUploadedFiles}
         />
       )}
-
       {/* Step 2: Preview */}
       {step === 'preview' && (
         <BlueprintPreview
@@ -288,9 +313,9 @@ function App() {
           onSimulate={handleSimulate}
           onBack={() => setStep('input')}
           simulating={simulating}
+          discovery={discoveryResult}
         />
       )}
-
       {/* Step 3: Simulate */}
       {step === 'simulate' && simResult && (
         <SimulationView
@@ -300,7 +325,6 @@ function App() {
           deploying={deploying}
         />
       )}
-
       {/* Step 4: Deployed */}
       {step === 'deployed' && deployResult && (
         <div className="deploy-success">
@@ -333,8 +357,9 @@ function App() {
           </button>
         </div>
       )}
+      {/* </>
+      )} */}
     </div>
   )
 }
-
 export default App
