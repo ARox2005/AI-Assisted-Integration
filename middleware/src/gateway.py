@@ -16,17 +16,30 @@ router = APIRouter()
 CONFIGS_DIR = Path(__file__).parent.parent / "configs"
 
 
-def load_config(service_name: str) -> dict:
-    """Load a JSON config blueprint from the configs directory."""
-    config_path = CONFIGS_DIR / f"{service_name}.json"
-    if not config_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail=f"No configuration found for service '{service_name}'. "
-                   f"Expected file: {config_path.name}"
-        )
-    with open(config_path, "r") as f:
-        return json.load(f)
+def load_config(service_name: str, tenant_id: str = "default") -> dict:
+    """
+    Load a JSON config blueprint from the configs directory.
+    Supports tenant-isolated configs: configs/{tenant_id}/{service}.json
+    Falls back to flat configs/{service}.json for backward compatibility.
+    """
+    # Try tenant-isolated path first
+    tenant_path = CONFIGS_DIR / tenant_id / f"{service_name}.json"
+    if tenant_path.exists():
+        with open(tenant_path, "r") as f:
+            return json.load(f)
+
+    # Fallback to flat path (backward compatibility)
+    flat_path = CONFIGS_DIR / f"{service_name}.json"
+    if flat_path.exists():
+        with open(flat_path, "r") as f:
+            return json.load(f)
+
+    raise HTTPException(
+        status_code=404,
+        detail=f"No configuration found for service '{service_name}' "
+               f"(tenant: '{tenant_id}'). "
+               f"Checked: {tenant_path.name} and {flat_path.name}"
+    )
 
 
 def resolve_json_path(data: dict, path: str):
@@ -42,7 +55,6 @@ def resolve_json_path(data: dict, path: str):
         for part in parts:
             part = part.strip()
             if part.startswith("'") and part.endswith("'"):
-                # It's a literal string
                 resolved_parts.append(part.strip("'"))
             elif part.startswith('"') and part.endswith('"'):
                 resolved_parts.append(part.strip('"'))
@@ -80,17 +92,17 @@ def transform_request(incoming_payload: dict, mapping: dict) -> dict:
 
 
 @router.post("/api/gateway/execute/{service_name}")
-async def execute_gateway(service_name: str, request: Request):
+async def execute_gateway(service_name: str, request: Request, tenant_id: str = "default"):
     """
-    Main gateway endpoint.
-    1. Loads the config for the requested service
+    Main gateway endpoint with tenant isolation.
+    1. Loads the config for the requested service (tenant-aware)
     2. Transforms the incoming payload
     3. Resolves credentials
     4. Forwards to the target API
     5. Returns the response
     """
-    # 1. Load config
-    config = load_config(service_name)
+    # 1. Load config (tenant-aware)
+    config = load_config(service_name, tenant_id)
 
     # 2. Parse incoming payload
     try:
@@ -136,6 +148,7 @@ async def execute_gateway(service_name: str, request: Request):
     # 6. Return the response with metadata
     return {
         "service": service_name,
+        "tenant_id": tenant_id,
         "target_system": config.get("integration_metadata", {}).get("target_system"),
         "api_version": config.get("integration_metadata", {}).get("api_version"),
         "upstream_status_code": response.status_code,

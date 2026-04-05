@@ -39,6 +39,7 @@ orchestrator/frontend/dist/
 # Auto-generated Data (created at runtime)
 # ──────────────────────────────────────────────
 orchestrator/data/
+middleware/configs/
 
 # ──────────────────────────────────────────────
 # Config Backups (created by deployer)
