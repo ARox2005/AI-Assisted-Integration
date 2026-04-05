@@ -214,14 +214,41 @@ def get_all_adapters() -> list:
 def get_adapter(name: str, version: Optional[str] = None) -> Optional[dict]:
     """
     Look up a specific adapter by name (and optionally version).
-    If version is None, returns the first adapter with that name.
+    If version is None, returns the latest adapter with that name.
     """
     registry = _ensure_registry_exists()
+    matches = [a for a in registry["adapters"] if a.get("name") == name]
+
+    if not matches:
+        return None
+
+    if version:
+        for adapter in matches:
+            if adapter.get("version") == version:
+                return adapter
+        return None
+
+    # Return the most recently added (last in list)
+    return matches[-1]
+
+
+def get_adapter_versions(name: str) -> list:
+    """
+    Get all versions of a specific adapter.
+    Returns a list of {version, created_at} dicts.
+    Supports the 'multiple API versions must coexist' requirement.
+    """
+    registry = _ensure_registry_exists()
+    versions = []
     for adapter in registry["adapters"]:
         if adapter.get("name") == name:
-            if version is None or adapter.get("version") == version:
-                return adapter
-    return None
+            versions.append({
+                "version": adapter.get("version"),
+                "created_at": adapter.get("created_at"),
+                "target_endpoint": adapter.get("target_endpoint"),
+            })
+    return versions
+
 
 def get_adapter_profiles_for_discovery() -> list:
     """
@@ -269,3 +296,4 @@ def get_adapter_profiles_for_discovery() -> list:
         profiles.append(profile)
 
     return profiles
+

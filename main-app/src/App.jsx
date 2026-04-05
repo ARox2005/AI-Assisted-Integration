@@ -26,12 +26,19 @@ const PAYLOADS = {
   },
 }
 
+const TENANTS = [
+  { id: 'default', label: 'Default Tenant' },
+  { id: 'tenant_a', label: 'Tenant A — Acme Corp' },
+  { id: 'tenant_b', label: 'Tenant B — Beta Finance' },
+]
+
 function App() {
   const [kycEnabled, setKycEnabled] = useState(false)
   const [gstEnabled, setGstEnabled] = useState(false)
   const [responses, setResponses] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [tenantId, setTenantId] = useState('default')
 
   const handleSendRequest = async () => {
     // Determine which services are toggled on
@@ -48,7 +55,7 @@ function App() {
     const results = []
     for (const service of services) {
       try {
-        const res = await fetch(`${MIDDLEWARE_BASE}/${service}`, {
+        const res = await fetch(`${MIDDLEWARE_BASE}/${service}?tenant_id=${tenantId}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(PAYLOADS[service]),
@@ -90,6 +97,14 @@ function App() {
       <p className="app-subtitle">
         Toggle the services below and hit Send to test the middleware pipeline.
       </p>
+      <div className="tenant-bar">
+        <label htmlFor="tenant">🏢 Tenant:</label>
+        <select id="tenant" value={tenantId} onChange={(e) => setTenantId(e.target.value)}>
+          {TENANTS.map((t) => (
+            <option key={t.id} value={t.id}>{t.label}</option>
+          ))}
+        </select>
+      </div>
       <div className="toggles-section">
         <ServiceToggle
           label="KYC Provider"

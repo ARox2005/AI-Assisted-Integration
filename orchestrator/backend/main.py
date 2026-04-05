@@ -5,11 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
 
-from .registry import get_all_adapters, get_adapter, add_adapter
+from .registry import get_all_adapters, get_adapter, get_adapter_versions, add_adapter
 from .llm_engine import process_sow, check_ollama_status
 from .deployer import split_deploy
 from .text_extractor import extract_text_from_file, combine_texts
 from .adapter_discovery import discover_adapter
+from .audit import log_event, get_recent_events
 
 env_path = Path(__file__).parent.parent / ".env"
 load_dotenv(env_path)
@@ -67,61 +68,43 @@ def lookup_adapter(adapter_name: str, version: Optional[str] = None):
 
     return adapter
 
+@app.get("/api/orchestrator/registry/{adapter_name}/versions")
+def list_adapter_versions(adapter_name: str):
+    """List all versions of a specific adapter. Supports version coexistence."""
+    versions = get_adapter_versions(adapter_name)
+    if not versions:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No versions found for adapter '{adapter_name}'.",
+        )
+    return {"adapter_name": adapter_name, "versions": versions}
+
+# ──────────────────────────────────────────────
+# Audit Trail
+# ──────────────────────────────────────────────
+
+@app.get("/api/orchestrator/audit")
+def get_audit_trail(limit: int = 50):
+    """Return the most recent audit events."""
+    events = get_recent_events(limit)
+    return {"total": len(events), "events": events}
+
 # ──────────────────────────────────────────────
 # SOW Processing & Blueprint Generation
 # ──────────────────────────────────────────────
 
 class GenerateRequest(BaseModel):
     """Request body for the /generate endpoint."""
-    sow_text: str                    # The full SOW document text
-    # adapter_name: Optional[str] = None  # Optional: if user wants to target a specific adapter name
-    model: Optional[str] = None     # Optional: override the default Ollama model
+    sow_text: str
+    model: Optional[str] = None
+    tenant_id: Optional[str] = "default"
 
 class DeployRequest(BaseModel):
     """Request body for the /deploy endpoint."""
-    blueprint: dict                  # The generated config blueprint JSON
-    catalog_entry: dict              # The catalog entry for the registry
-    # service_name: str                # Filename for the config (e.g., "kyc_provider")
-    service_name: Optional[str] = None  # Optional: override derived filename
-
-# @app.post("/api/orchestrator/generate")
-# async def generate_blueprint(request: GenerateRequest):
-#     """
-#     Accept an SOW document, process it with the LLM, and return:
-#     - blueprint: the config JSON for the middleware
-#     - catalog_entry: the metadata entry for the registry
-#     """
-#     if not request.sow_text.strip():
-#         raise HTTPException(status_code=400, detail="SOW text cannot be empty.")
-
-#     result = await process_sow(request.sow_text, model=request.model)
-
-#     # Handle rejections
-#     if result.get("rejected"):
-        
-#         return {
-#             "status": "rejected",
-#             "rejection": result["rejection"],
-#             "model_used": result.get("model_used"),
-#         }
-
-#     if not result["success"]:
-#         raise HTTPException(
-#             status_code=422,
-#             detail={
-#                 "error": result["error"],
-#                 "raw_response": result.get("raw_response"),
-#                 "blueprint": result.get("blueprint"),
-#                 "catalog_entry": result.get("catalog_entry"),
-#             },
-#         )
-
-#     return {
-#         "status": "success",
-#         "blueprint": result["blueprint"],
-#         "catalog_entry": result["catalog_entry"],
-#         "model_used": result.get("model_used"),
-#     }
+    blueprint: dict
+    catalog_entry: dict
+    service_name: Optional[str] = None
+    tenant_id: Optional[str] = "default"
 
 @app.post("/api/orchestrator/generate")
 async def generate_blueprint(request: GenerateRequest):
@@ -132,6 +115,12 @@ async def generate_blueprint(request: GenerateRequest):
     if not request.sow_text.strip():
         raise HTTPException(status_code=400, detail="SOW text cannot be empty.")
 
+    log_event("generate_started", {
+        "tenant_id": request.tenant_id,
+        "sow_length": len(request.sow_text),
+        "model": request.model,
+    })
+
     # Step 1: Adapter Discovery
     discovery = await discover_adapter(request.sow_text, model=request.model)
 
@@ -141,6 +130,10 @@ async def generate_blueprint(request: GenerateRequest):
 
     # Handle rejections
     if result.get("rejected"):
+        log_event("generate_rejected", {
+            "tenant_id": request.tenant_id,
+            "reason": result["rejection"].get("reason", ""),
+        })
         return {
             "status": "rejected",
             "rejection": result["rejection"],
@@ -149,6 +142,10 @@ async def generate_blueprint(request: GenerateRequest):
         }
 
     if not result["success"]:
+        log_event("generate_failed", {
+            "tenant_id": request.tenant_id,
+            "error": result.get("error"),
+        })
         raise HTTPException(
             status_code=422,
             detail={
@@ -158,6 +155,13 @@ async def generate_blueprint(request: GenerateRequest):
                 "catalog_entry": result.get("catalog_entry"),
             },
         )
+
+    log_event("generate_completed", {
+        "tenant_id": request.tenant_id,
+        "model_used": result.get("model_used"),
+        "adapter_discovered": discovery.get("path"),
+        "target_system": result["blueprint"].get("integration_metadata", {}).get("target_system"),
+    })
 
     return {
         "status": "success",
@@ -171,40 +175,32 @@ async def generate_blueprint(request: GenerateRequest):
 async def deploy_blueprint(request: DeployRequest):
     """
     Split deployment:
-    1. Save the blueprint to middleware/configs/{service_name}.json
+    1. Save the blueprint to middleware/configs/{tenant_id}/{service_name}.json
     2. Add the catalog entry to the integration registry
     """
-    # Step 1: Registry update
-    # registry_result = add_adapter(request.catalog_entry)
-    # if not registry_result.success:
-    #     raise HTTPException(
-    #         status_code=400,
-    #         detail=f"Registry update failed: {registry_result.message}",
-    #     )
-
-    # # Step 2: Deploy config to middleware
-    # # TODO: Wire to deployer.deploy_config() once we build it
-    # # For now, just report what would happen
-    # return {
-    #     "status": "partial",
-    #     "registry": registry_result.to_dict(),
-    #     "config_deployment": {
-    #         "status": "pending",
-    #         "message": f"Deployer not yet connected. Would write to middleware/configs/{request.service_name}.json",
-    #     },
-    # }
-
     deployment = split_deploy(
         blueprint=request.blueprint,
         catalog_entry=request.catalog_entry,
         service_name=request.service_name,
+        tenant_id=request.tenant_id,
     )
 
     if not deployment.success:
+        log_event("deploy_failed", {
+            "tenant_id": request.tenant_id,
+            "error": deployment.config_message,
+        })
         raise HTTPException(
             status_code=400,
             detail=deployment.to_dict(),
         )
+
+    log_event("deploy_completed", {
+        "tenant_id": request.tenant_id,
+        "service_name": request.service_name or request.catalog_entry.get("service_name"),
+        "config_status": deployment.config_status,
+        "registry_action": deployment.registry_result.action if deployment.registry_result else None,
+    })
 
     return deployment.to_dict()
 
@@ -212,12 +208,10 @@ async def deploy_blueprint(request: DeployRequest):
 async def generate_and_deploy(request: GenerateRequest):
     """
     One-shot endpoint: SOW in → blueprint generated → deployed to middleware + registry.
-    Combines /generate and /deploy into a single call.
     """
     if not request.sow_text.strip():
         raise HTTPException(status_code=400, detail="SOW text cannot be empty.")
 
-    # Step 1: Generate
     result = await process_sow(request.sow_text, model=request.model)
 
     if not result["success"]:
@@ -229,11 +223,17 @@ async def generate_and_deploy(request: GenerateRequest):
             },
         )
 
-    # Step 2: Deploy
     deployment = split_deploy(
         blueprint=result["blueprint"],
         catalog_entry=result["catalog_entry"],
+        tenant_id=request.tenant_id,
     )
+
+    log_event("generate_and_deploy", {
+        "tenant_id": request.tenant_id,
+        "model_used": result.get("model_used"),
+        "deploy_success": deployment.success,
+    })
     
     return {
         "status": "success" if deployment.success else "partial_failure",
@@ -245,70 +245,14 @@ async def generate_and_deploy(request: GenerateRequest):
         "deployment": deployment.to_dict(),
     }
 
-# @app.post("/api/orchestrator/generate-from-upload")
-# async def generate_from_upload(
-#     sow_text: Optional[str] = Form(default=""),
-#     files: List[UploadFile] = File(default=[]),
-#     model: Optional[str] = Form(default=None),
-# ):
-#     """
-#     Generate blueprint from uploaded files and/or pasted text.
-#     Accepts multipart form data with:
-#     - sow_text: Optional pasted text
-#     - files: One or more PDF/DOCX/TXT files
-#     - model: Optional Ollama model override
-#     """
-#     # Extract text from uploaded files
-#     file_results = []
-#     for uploaded_file in files:
-#         content = await uploaded_file.read()
-#         extracted = extract_text_from_file(content, uploaded_file.filename)
-#         file_results.append((uploaded_file.filename, extracted))
-
-#     # Combine all text
-#     combined_text = combine_texts(sow_text or "", file_results)
-
-#     if not combined_text.strip():
-#         raise HTTPException(
-#             status_code=400,
-#             detail="No content provided. Paste text or upload at least one file.",
-#         )
-
-#     # Process through LLM
-#     result = await process_sow(combined_text, model=model)
-
-#     # Handle rejections
-#     if result.get("rejected"):
-#         return {
-#             "status": "rejected",
-#             "rejection": result["rejection"],
-#             "model_used": result.get("model_used"),
-#             "combined_text_preview": combined_text[:500] + "..." if len(combined_text) > 500 else combined_text,
-#         }
-
-#     if not result["success"]:
-#         raise HTTPException(
-#             status_code=422,
-#             detail={
-#                 "error": result["error"],
-#                 "raw_response": result.get("raw_response"),
-#             },
-#         )
-
-#     return {
-#         "status": "success",
-#         "blueprint": result["blueprint"],
-#         "catalog_entry": result["catalog_entry"],
-#         "model_used": result.get("model_used"),
-#         "files_processed": [f[0] for f in file_results],
-#     }
-
 @app.post("/api/orchestrator/generate-from-upload")
 async def generate_from_upload(
     sow_text: Optional[str] = Form(default=""),
     files: List[UploadFile] = File(default=[]),
     model: Optional[str] = Form(default=None),
+    tenant_id: Optional[str] = Form(default="default"),
 ):
+    """Generate blueprint from uploaded files and/or pasted text."""
     # Extract text from uploaded files
     file_results = []
     for uploaded_file in files:
@@ -325,6 +269,12 @@ async def generate_from_upload(
             detail="No content provided. Paste text or upload at least one file.",
         )
 
+    log_event("generate_upload_started", {
+        "tenant_id": tenant_id,
+        "files": [f[0] for f in file_results],
+        "text_length": len(combined_text),
+    })
+
     # Step 1: Adapter Discovery
     discovery = await discover_adapter(combined_text, model=model)
 
@@ -334,6 +284,10 @@ async def generate_from_upload(
 
     # Handle rejections
     if result.get("rejected"):
+        log_event("generate_rejected", {
+            "tenant_id": tenant_id,
+            "reason": result["rejection"].get("reason", ""),
+        })
         return {
             "status": "rejected",
             "rejection": result["rejection"],
@@ -343,6 +297,7 @@ async def generate_from_upload(
         }
 
     if not result["success"]:
+        log_event("generate_failed", {"tenant_id": tenant_id, "error": result.get("error")})
         raise HTTPException(
             status_code=422,
             detail={
@@ -350,6 +305,13 @@ async def generate_from_upload(
                 "raw_response": result.get("raw_response"),
             },
         )
+
+    log_event("generate_completed", {
+        "tenant_id": tenant_id,
+        "model_used": result.get("model_used"),
+        "files_processed": [f[0] for f in file_results],
+        "adapter_discovered": discovery.get("path"),
+    })
 
     return {
         "status": "success",
@@ -360,94 +322,33 @@ async def generate_from_upload(
         "discovery": discovery,
     }
 
-
-# ──────────────────────────────────────────────
-# Smart Routing (AI-Powered Intent Routing)
-# ──────────────────────────────────────────────
-
-# class RouteRequest(BaseModel):
-#     payload: dict
-#     intent: Optional[str] = None
-#     model: Optional[str] = None
-#     auto_execute: Optional[bool] = False  # If True, also execute via middleware
-
-
-# @app.post("/api/orchestrator/route")
-# async def smart_route(request: RouteRequest):
-#     """
-#     AI-powered intent routing.
-#     Sends the payload + registry to Ollama, which picks the best adapter.
-#     Optionally auto-executes via middleware.
-#     """
-#     # Step 1: Route
-#     route_result = await route_intent(
-#         payload=request.payload,
-#         intent=request.intent,
-#         model=request.model,
-#     )
-
-#     if not route_result["success"]:
-#         raise HTTPException(status_code=422, detail=route_result)
-
-#     if not route_result["routed"]:
-#         return {
-#             "status": "no_match",
-#             "message": route_result.get("reason", "No adapter matched the payload."),
-#             "routing": route_result,
-#         }
-
-#     # Step 2: If auto_execute is enabled, forward to middleware
-#     if request.auto_execute and route_result["selected_adapters"]:
-#         top_adapter = route_result["selected_adapters"][0]
-#         adapter_name = top_adapter["adapter_name"]
-
-#         # Sanitize adapter name to match config filename
-#         service_name = adapter_name.lower().replace(" ", "_").replace("-", "_")
-
-#         try:
-#             async with httpx.AsyncClient(timeout=30.0) as client:
-#                 mw_response = await client.post(
-#                     f"http://localhost:8002/api/gateway/execute/{service_name}",
-#                     json=request.payload,
-#                 )
-#                 mw_data = mw_response.json()
-#         except httpx.ConnectError:
-#             raise HTTPException(
-#                 status_code=502,
-#                 detail="Middleware not reachable at port 8002.",
-#             )
-#         except Exception as e:
-#             raise HTTPException(
-#                 status_code=502,
-#                 detail=f"Middleware call failed: {str(e)}",
-#             )
-
-#         return {
-#             "status": "executed",
-#             "routing": route_result,
-#             "execution": {
-#                 "adapter_used": adapter_name,
-#                 "service_name": service_name,
-#                 "middleware_response": mw_data,
-#                 "middleware_status": mw_response.status_code,
-#             },
-#         }
-
-#     # Step 3: Route-only (no execution)
-#     return {
-#         "status": "routed",
-#         "routing": route_result,
-#     }
-
 @app.post("/api/orchestrator/reset-configs")
-async def reset_configs():
-    """Demo utility: Deletes all deployed config files from middleware/configs/."""
+async def reset_configs(tenant_id: Optional[str] = None):
+    """Demo utility: Deletes deployed config files from middleware/configs/."""
     configs_dir = Path(__file__).parent.parent.parent / "middleware" / "configs"
     deleted = []
-    if configs_dir.exists():
-        for config_file in configs_dir.glob("*.json"):
-            config_file.unlink()
-            deleted.append(config_file.name)
+
+    if tenant_id:
+        # Reset specific tenant
+        tenant_dir = configs_dir / tenant_id
+        if tenant_dir.exists():
+            for config_file in tenant_dir.glob("*.json"):
+                config_file.unlink()
+                deleted.append(f"{tenant_id}/{config_file.name}")
+    else:
+        # Reset all configs (flat + tenant dirs)
+        if configs_dir.exists():
+            for config_file in configs_dir.glob("*.json"):
+                config_file.unlink()
+                deleted.append(config_file.name)
+            for tenant_dir in configs_dir.iterdir():
+                if tenant_dir.is_dir():
+                    for config_file in tenant_dir.glob("*.json"):
+                        config_file.unlink()
+                        deleted.append(f"{tenant_dir.name}/{config_file.name}")
+
+    log_event("configs_reset", {"tenant_id": tenant_id or "all", "deleted": deleted})
+
     return {
         "status": "configs_cleared",
         "deleted": deleted,

@@ -3,7 +3,7 @@ import SowInput from './components/SowInput'
 import BlueprintPreview from './components/BlueprintPreview'
 import SimulationView from './components/SimulationView'
 import StatusBar from './components/StatusBar'
-// import SmartRoute from './components/SmartRoute'
+import AuditTrail from './components/AuditTrail'
 import './App.css'
 
 const API_BASE = 'http://localhost:8003/api/orchestrator'
@@ -29,10 +29,19 @@ const SAMPLE_PAYLOADS = {
   },
 }
 
+const TENANTS = [
+  { id: 'default', label: 'Default Tenant' },
+  { id: 'tenant_a', label: 'Tenant A — Acme Corp' },
+  { id: 'tenant_b', label: 'Tenant B — Beta Finance' },
+]
+
 function App() {
   // Workflow state: "input" | "preview" | "simulate" | "deployed"
   const [step, setStep] = useState('input')
-  const [mode, setMode] = useState('pipeline')  // 'pipeline' | 'smartroute'
+  const [showAudit, setShowAudit] = useState(false)
+
+  // Tenant
+  const [tenantId, setTenantId] = useState('default')
 
   // Data
   const [sowText, setSowText] = useState('')
@@ -102,6 +111,7 @@ function App() {
         // Use multipart upload endpoint
         const formData = new FormData()
         formData.append('sow_text', sowText)
+        formData.append('tenant_id', tenantId)
         uploadedFiles.forEach((file) => formData.append('files', file))
 
         res = await fetch(`${API_BASE}/generate-from-upload`, {
@@ -113,7 +123,7 @@ function App() {
         res = await fetch(`${API_BASE}/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sow_text: sowText }),
+          body: JSON.stringify({ sow_text: sowText, tenant_id: tenantId }),
         })
       }
 
@@ -205,6 +215,7 @@ function App() {
         body: JSON.stringify({
           blueprint: finalBlueprint,
           catalog_entry: finalCatalog,
+          tenant_id: tenantId,
         }),
       })
       const data = await res.json()
@@ -245,33 +256,36 @@ function App() {
       <header className="app-header">
         <h1 className="app-title">ZeroOne AI Orchestrator</h1>
         <p className="app-subtitle">
-          {/* {mode === 'pipeline'
-            ? 'Upload SOW → Generate → Simulate → Deploy'
-            : 'Paste payload → AI picks the right adapter → Execute'
-          } */}
           Upload SOW → Generate → Simulate → Deploy
         </p>
         <StatusBar ollamaStatus={ollamaStatus} registryCount={registryCount} />
       </header>
-      {/* Mode Toggle */}
-      {/* <div className="mode-toggle">
+
+      {/* Tenant Selector + Audit Toggle */}
+      <div className="toolbar">
+        <div className="tenant-selector">
+          <label htmlFor="tenant-select">🏢 Tenant:</label>
+          <select
+            id="tenant-select"
+            value={tenantId}
+            onChange={(e) => setTenantId(e.target.value)}
+          >
+            {TENANTS.map((t) => (
+              <option key={t.id} value={t.id}>{t.label}</option>
+            ))}
+          </select>
+        </div>
         <button
-          className={`mode-btn ${mode === 'pipeline' ? 'active' : ''}`}
-          onClick={() => setMode('pipeline')}
+          className={`btn btn-sm ${showAudit ? 'btn-active' : ''}`}
+          onClick={() => setShowAudit(!showAudit)}
         >
-          🔧 Pipeline Mode
+          📋 {showAudit ? 'Hide' : 'Show'} Audit Trail
         </button>
-        <button
-          className={`mode-btn ${mode === 'smartroute' ? 'active' : ''}`}
-          onClick={() => setMode('smartroute')}
-        >
-          🧠 Smart Route
-        </button>
-      </div> */}
-      {/* {mode === 'smartroute' ? (
-        <SmartRoute />
-      ) : ( */}
-      {/* <> */}
+      </div>
+
+      {/* Audit Trail Panel */}
+      {showAudit && <AuditTrail apiBase={API_BASE} />}
+
       {/* Step Indicator */}
       <div className="step-indicator">
         {['input', 'preview', 'simulate', 'deployed'].map((s, i) => {
@@ -332,6 +346,10 @@ function App() {
           <h2>Deployment Complete</h2>
           <div className="deploy-details">
             <div className="detail-row">
+              <span className="detail-label">Tenant</span>
+              <span className="detail-value mono">{deployResult.tenant_id || tenantId}</span>
+            </div>
+            <div className="detail-row">
               <span className="detail-label">Config</span>
               <span className="detail-value success">
                 {deployResult.config_deployment?.message}
@@ -357,8 +375,6 @@ function App() {
           </button>
         </div>
       )}
-      {/* </>
-      )} */}
     </div>
   )
 }

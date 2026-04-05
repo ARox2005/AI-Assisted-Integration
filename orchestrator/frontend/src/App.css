@@ -211,35 +211,68 @@ body {
   color: #888;
 }
 
-/* ── Mode Toggle ── */
+/* ── Toolbar (Tenant + Audit) ── */
 
-.mode-toggle {
+.toolbar {
   display: flex;
-  gap: 4px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 20px;
+  padding: 10px 14px;
   background: #1a1a2e;
   border-radius: 8px;
-  padding: 4px;
 }
 
-.mode-btn {
-  flex: 1;
-  padding: 10px;
+.tenant-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
+  color: #aaa;
+}
+
+.tenant-selector label {
   font-weight: 600;
-  background: transparent;
-  border: none;
+  white-space: nowrap;
+}
+
+.tenant-selector select {
+  background: #0a0a14;
+  color: #e0e0e0;
+  border: 1px solid #2d2d44;
   border-radius: 6px;
-  color: #666;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.tenant-selector select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.btn-sm {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid #2d2d44;
+  border-radius: 6px;
+  background: transparent;
+  color: #888;
   cursor: pointer;
   transition: all 0.2s;
+  white-space: nowrap;
 }
 
-.mode-btn.active {
+.btn-sm:hover {
+  background: #2a2a4a;
+  color: #e0e0e0;
+}
+
+.btn-active {
   background: #1e3a5f;
   color: #fff;
-}
-
-.mode-btn:hover:not(.active) {
-  color: #aaa;
+  border-color: #3b82f6;
 }

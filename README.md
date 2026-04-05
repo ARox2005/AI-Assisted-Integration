@@ -14,7 +14,7 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
 └──────────────┘        └──────────────────┘        └──────────────┘
                                ▲
                                │ reads configs from
-                               │ /middleware/configs/
+                               │ /middleware/configs/{tenant_id}/
                                │
                         ┌──────────────────┐
                         │  AI Orchestrator  │
@@ -40,9 +40,13 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
 - **Multiple File Upload**: Drag-and-drop multiple documents simultaneously — all content is merged and sent to the LLM
 - **AI-Powered Adapter Discovery**: Before generating a new config, the AI checks the adapter registry for existing profiles that match the SOW — avoiding duplicates and reusing existing adapters (Path A: existing, Path B: new)
 - **AI-Generated Configs**: The LLM reads SOW documents and produces middleware-ready JSON blueprints (no manual coding)
+- **Mandatory vs Optional Detection**: The AI classifies each integration service as mandatory or optional based on SOW business rules
 - **Scope Validation**: The AI rejects out-of-scope or impossible integrations with clear reasons and suggestions
 - **Live Simulation**: Test the generated config against real APIs before deploying — see the full request/response pipeline
-- **Split Deployment**: Config is saved to middleware, and a catalog entry is auto-added to the adapter registry
+- **Split Deployment**: Config is saved to middleware (tenant-isolated), and a catalog entry is auto-added to the adapter registry
+- **Tenant-Level Config Isolation**: Each tenant gets its own config directory (`middleware/configs/{tenant_id}/`), ensuring complete data isolation
+- **API Version Coexistence**: Multiple versions of the same adapter can coexist in the registry — the AI selects the appropriate version
+- **Full Audit Trail**: Every action (generate, deploy, reject, reset) is logged with timestamps and tenant context — viewable in the UI
 - **Dynamic Registry**: The adapter catalog is built and maintained entirely by the AI — zero manual data entry
 - **Switchable LLM**: Default is Ollama (local/free). Can be swapped to Gemini or OpenAI with minimal code changes
 - **Demo Reset**: One-click config purge from the Main App for repeatable demos
@@ -74,22 +78,28 @@ FinSpark_Proto_v1/
 │           └── ResponsePanel.jsx
 │
 ├── middleware/                   # Service 2: Integration Gateway
-│   ├── configs/                 # AI-generated config blueprints
-│   │   ├── kyc_provider.json
-│   │   └── gst_service.json
+│   ├── configs/                 # AI-generated config blueprints (tenant-isolated)
+│   │   ├── default/             # Default tenant configs
+│   │   │   ├── kyc_provider.json
+│   │   │   └── gst_service.json
+│   │   ├── tenant_a/            # Tenant A configs
+│   │   └── tenant_b/            # Tenant B configs
 │   └── src/
 │       ├── main.py
-│       ├── gateway.py           # Includes /simulate endpoint
+│       ├── gateway.py           # Includes /simulate endpoint + tenant-aware config loading
 │       └── credential_resolver.py
 │
 ├── orchestrator/                # Service 3: AI Orchestrator
-│   ├── data/                    # Auto-generated registry (created by AI)
+│   ├── data/                    # Auto-generated registry + audit log
+│   │   ├── integration_registry.json  # Adapter catalog (version coexistence)
+│   │   └── audit_log.json             # Full audit trail
 │   ├── backend/
 │   │   ├── main.py
-│   │   ├── llm_engine.py        # LLM integration + scope validation
+│   │   ├── llm_engine.py        # LLM integration + scope validation + mandatory/optional detection
 │   │   ├── adapter_discovery.py # AI-powered adapter matching from SOW
-│   │   ├── registry.py          # Dynamic adapter catalog
-│   │   ├── deployer.py          # Split deployment logic
+│   │   ├── registry.py          # Dynamic adapter catalog (multi-version support)
+│   │   ├── deployer.py          # Split deployment logic (tenant-isolated)
+│   │   ├── audit.py             # Audit trail logging
 │   │   └── text_extractor.py    # PDF/DOCX/TXT text extraction
 │   └── frontend/
 │       └── src/
@@ -98,7 +108,8 @@ FinSpark_Proto_v1/
 │               ├── SowInput.jsx          # Text + file upload input
 │               ├── BlueprintPreview.jsx   # Editable JSON preview + discovery banner
 │               ├── SimulationView.jsx     # Live simulation results
-│               └── StatusBar.jsx          # Ollama + registry status
+│               ├── StatusBar.jsx          # Ollama + registry status
+│               └── AuditTrail.jsx         # Audit trail panel
 │
 └── mock-apis/                   # Service 4: Mock External Services
     └── src/
@@ -199,29 +210,34 @@ Opens at: **http://localhost:5174**
 
 1. Open **http://localhost:5174** (Orchestrator UI)
 2. Check the status bar — Ollama should show as online
-3. **Input** — choose one or more:
+3. **Select a tenant** from the dropdown (Default, Tenant A, or Tenant B)
+4. **Input** — choose one or more:
    - Click **"Load sample SOW"** for a quick test
    - Paste SOW text directly into the text area
    - Drag-and-drop PDF/DOCX files into the upload zone (multiple files supported)
-4. Click **"→ Generate Blueprint"** — wait for Ollama (~10–60 seconds)
+5. Click **"→ Generate Blueprint"** — wait for Ollama (~10–60 seconds)
    - The AI first runs **Adapter Discovery** — checking the registry for existing matching profiles
    - If a match is found (Path A), the AI generates a config tailored to that adapter
    - If no match (Path B), the AI generates both a new adapter profile and the config from scratch
-5. **Preview** — review the generated Blueprint and Catalog Entry
+   - The AI classifies the integration as **mandatory** or **optional** based on SOW business rules
+6. **Preview** — review the generated Blueprint and Catalog Entry
    - A **discovery banner** shows: 🔗 "Matched Adapter: KYC Provider v1.0 (95%)" or 🆕 "New adapter profile"
+   - The blueprint includes a `service_classification` block showing mandatory/optional status
    - Both JSON outputs are editable. Switch between tabs and tweak if needed
-6. Click **"▶ Simulate"** — the config is tested against the live mock API
+7. Click **"▶ Simulate"** — the config is tested against the live mock API
    - See the full pipeline: incoming payload → transformation → API response
-7. If satisfied, click **"🚀 Deploy to Middleware"**
-8. ✅ Config saved to `middleware/configs/`, registry entry created
+8. If satisfied, click **"🚀 Deploy to Middleware"**
+9. ✅ Config saved to `middleware/configs/{tenant_id}/`, registry entry created
+10. Click **"📋 Show Audit Trail"** to view the logged events
 
 ### Flow B: Test the Integration (Main App)
 
 1. Open **http://localhost:5173** (Main App)
-2. Toggle **KYC Provider** ON
-3. Click **"Send Request"**
-4. The request flows: Main App → Middleware → Mock KYC API → response displayed
-5. Repeat with **GST Service** toggled ON
+2. **Select a tenant** from the dropdown (must match the tenant used during deployment)
+3. Toggle **KYC Provider** ON
+4. Click **"Send Request"**
+5. The request flows: Main App → Middleware (loads tenant-specific config) → Mock KYC API → response displayed
+6. Repeat with **GST Service** toggled ON
 
 ### Flow C: Test Adapter Discovery (Reuse an Existing Adapter)
 
@@ -280,14 +296,14 @@ Response Logic:
    - `credential_vault_reference` = `ENV.GST_SERVICE_KEY`
    - `service_name` = `gst_service` in the catalog entry
 3. Click **Simulate** → should see a successful response from the mock GST API
-4. Click **Deploy** → config saved to `middleware/configs/gst_service.json`
-5. Open **http://localhost:5173** (Main App) → toggle **GST Service** ON → click **Send Request**
-6. ✅ Full pipeline: Main App → Middleware (reads `gst_service.json`) → Mock GST API → response displayed
+4. Click **Deploy** → config saved to `middleware/configs/{tenant_id}/gst_service.json`
+5. Open **http://localhost:5173** (Main App) → select the same tenant → toggle **GST Service** ON → click **Send Request**
+6. ✅ Full pipeline: Main App → Middleware (reads tenant-specific `gst_service.json`) → Mock GST API → response displayed
 
 ### Flow E: Reset Configs (For Repeatable Demos)
 
 1. Open **http://localhost:5173** (Main App)
-2. Click **"Reset Configs"** — all deployed config files in `middleware/configs/` are deleted
+2. Click **"Reset Configs"** — all deployed config files across all tenants in `middleware/configs/` are deleted
 3. This lets you re-run the full demo from scratch without manually deleting files
 
 ### Flow F: Test Rejection (Out-of-Scope Documents)
@@ -482,7 +498,7 @@ Regardless of which LLM you use, these parts **never change**:
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/health` | Health check |
-| POST | `/api/gateway/execute/{service_name}` | Execute integration via deployed config |
+| POST | `/api/gateway/execute/{service_name}?tenant_id=` | Execute integration via deployed config (tenant-aware) |
 | POST | `/api/gateway/simulate` | Simulate integration with inline config |
 
 ### Orchestrator (Port 8003)
@@ -493,11 +509,13 @@ Regardless of which LLM you use, these parts **never change**:
 | GET | `/health/ollama` | Ollama + model status |
 | GET | `/api/orchestrator/registry` | List all adapters in catalog |
 | GET | `/api/orchestrator/registry/{name}` | Lookup specific adapter |
-| POST | `/api/orchestrator/generate` | Generate blueprint from SOW text (includes adapter discovery) |
-| POST | `/api/orchestrator/generate-from-upload` | Generate blueprint from uploaded files + text (includes adapter discovery) |
-| POST | `/api/orchestrator/deploy` | Deploy blueprint + registry entry |
-| POST | `/api/orchestrator/generate-and-deploy` | One-shot generate + deploy |
-| POST | `/api/orchestrator/reset-configs` | Delete all deployed configs from middleware (demo utility) |
+| GET | `/api/orchestrator/registry/{name}/versions` | List all versions of an adapter |
+| GET | `/api/orchestrator/audit?limit=50` | View audit trail (recent events) |
+| POST | `/api/orchestrator/generate` | Generate blueprint from SOW text (includes adapter discovery, accepts `tenant_id`) |
+| POST | `/api/orchestrator/generate-from-upload` | Generate blueprint from uploaded files + text (includes adapter discovery, accepts `tenant_id`) |
+| POST | `/api/orchestrator/deploy` | Deploy blueprint + registry entry (tenant-isolated) |
+| POST | `/api/orchestrator/generate-and-deploy` | One-shot generate + deploy (tenant-isolated) |
+| POST | `/api/orchestrator/reset-configs` | Delete deployed configs (optional `tenant_id` filter) |
 
 ---
 
@@ -602,7 +620,7 @@ Source Data Mapping:
 1. Paste the SOW into the Orchestrator UI (or upload as a file)
 2. Click **Generate Blueprint**
 3. **Simulate** to verify
-4. **Deploy** — config is saved to `middleware/configs/credit_bureau.json`
+4. **Deploy** — config is saved to `middleware/configs/{tenant_id}/credit_bureau.json`
 
 ### Step 6: (Optional) Add to Main App
 
@@ -616,8 +634,9 @@ If you want the new API in the Main App's toggle UI, add a new toggle in `main-a
 | Register router | `mock-apis/src/main.py` |
 | Credential | `.env` at project root |
 | SOW document | Paste text or upload PDF/DOCX in orchestrator UI |
-| Config blueprint | Auto-generated by AI and deployed to `middleware/configs/` |
+| Config blueprint | Auto-generated by AI and deployed to `middleware/configs/{tenant_id}/` |
 | Registry entry | Auto-created by AI in `orchestrator/data/integration_registry.json` |
+| Audit log | Auto-recorded in `orchestrator/data/audit_log.json` |
 | Main App toggle | (Optional) `main-app/src/App.jsx` |
 
 > **The key insight:** You only write the mock endpoint by hand. The middleware config and registry entry are generated and deployed entirely by the AI orchestrator from your SOW document.
@@ -632,7 +651,7 @@ If you want the new API in the Main App's toggle UI, add a new toggle in `main-a
 | `Model not found` | Run `ollama pull llama3` (or your chosen model) |
 | CORS errors in browser | Make sure all backends have `allow_origins=["*"]` |
 | `Credential not found` | Check `.env` file exists in project root with the right keys |
-| Middleware returns 404 | Config file missing in `middleware/configs/`. Deploy from orchestrator first |
+| Middleware returns 404 | Config file missing in `middleware/configs/{tenant_id}/`. Deploy from orchestrator first, and ensure the same tenant is selected in both UIs |
 | LLM returns invalid JSON | Try a larger model (e.g., `llama3:70b`) or use Gemini/GPT |
 | PDF extraction empty | The PDF may be scanned/image-based. Use a text-based PDF or DOCX instead |
 | `Integration Rejected` | The uploaded document doesn't describe a valid API integration. Check the rejection message for details |

@@ -123,6 +123,14 @@ Then return this rejection response instead:
   }
 }
 Only reject if the document genuinely cannot produce a valid integration. If you can reasonably infer missing details, proceed with generation.
+
+---
+**MANDATORY vs OPTIONAL SERVICE DETECTION**
+Analyze the SOW to classify each integration service as mandatory or optional:
+- **Mandatory**: The SOW states the integration MUST happen, or it's a prerequisite for the business process (e.g., "KYC verification is required before loan approval")
+- **Optional**: The SOW describes the integration as a nice-to-have, conditional, or future phase (e.g., "optionally check credit score if available")
+Include this classification in the blueprint under "service_classification".
+
 ---
 
 **Output 1: "blueprint"**
@@ -131,6 +139,10 @@ This is an executable configuration file for a middleware gateway. It MUST follo
   "integration_metadata": {
     "target_system": "<Name of the external API/service>",
     "api_version": "<Version from the SOW>"
+  },
+  "service_classification": {
+    "priority": "<mandatory | optional>",
+    "reason": "<Why this service is mandatory or optional, based on the SOW's business rules>"
   },
   "security_config": {
     "auth_type": "<Bearer | ApiKey | Basic>",
@@ -151,11 +163,12 @@ Rules for the blueprint:
 - response_logic should be a human-readable conditional from the SOW's business rules.
 ---
 **Output 2: "catalog_entry"**
-This is the adapter's Technical Profile for the registry. It MUST follow this schema:
+This is the adapter's Technical Profile for the registry. Multiple versions of the same adapter can coexist.
+It MUST follow this schema:
 {
   "name": "<Human-readable name of the target system>",
   "service_name": "<lowercase_snake_case config filename from the SOW, e.g., kyc_provider, gst_service. This becomes the config file name.>",
-  "version": "<API version>",
+  "version": "<API version — e.g., v1.0, v2.0. Multiple versions of the same adapter can coexist in the registry.>",
   "description": "<One-line description of what this integration does>",
   "category": "<Category: e.g., Identity Verification, Payment Gateway, Credit Bureau>",
   "provider": "<Provider name: e.g., Experian, Razorpay>",
