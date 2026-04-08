@@ -6,8 +6,9 @@ import StatusBar from './components/StatusBar'
 import AuditTrail from './components/AuditTrail'
 import './App.css'
 
-const API_BASE = 'http://localhost:8003/api/orchestrator'
-const MIDDLEWARE_BASE = 'http://localhost:8002/api/gateway'
+const API_BASE = import.meta.env.VITE_ORCHESTRATOR_API_BASE || 'http://localhost:8003/api/orchestrator'
+const MIDDLEWARE_BASE = import.meta.env.VITE_MIDDLEWARE_API_BASE || 'http://localhost:8002/api/gateway'
+const HEALTH_URL = import.meta.env.VITE_ORCHESTRATOR_HEALTH_URL || 'http://localhost:8003/health/ollama'
 
 // Sample payloads for simulation (same as main-app)
 const SAMPLE_PAYLOADS = {
@@ -74,7 +75,7 @@ function App() {
 
   const fetchOllamaStatus = async () => {
     try {
-      const res = await fetch('http://localhost:8003/health/ollama')
+      const res = await fetch(HEALTH_URL)
       const data = await res.json()
       setOllamaStatus(data)
     } catch {

@@ -4,7 +4,8 @@ import RequestButton from './components/RequestButton'
 import ResponsePanel from './components/ResponsePanel'
 import './App.css'
 
-const MIDDLEWARE_BASE = 'http://localhost:8002/api/gateway/execute'
+const MIDDLEWARE_BASE = import.meta.env.VITE_MIDDLEWARE_URL || 'http://localhost:8002/api/gateway/execute'
+const ORCHESTRATOR_RESET_URL = import.meta.env.VITE_ORCHESTRATOR_RESET_URL || 'http://localhost:8003/api/orchestrator/reset-configs'
 
 // Static test payloads for each service
 const PAYLOADS = {
@@ -83,7 +84,7 @@ function App() {
   const handleResetConfigs = async () => {
     if (!confirm('Delete all deployed configs from middleware?')) return
     try {
-      const res = await fetch('http://localhost:8003/api/orchestrator/reset-configs', { method: 'POST' })
+      const res = await fetch(ORCHESTRATOR_RESET_URL, { method: 'POST' })
       const data = await res.json()
       alert(`Cleared ${data.count} config(s): ${data.deleted.join(', ') || 'none found'}`)
     } catch (err) {
