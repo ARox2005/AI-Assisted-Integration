@@ -58,3 +58,4 @@ middleware/configs/
 Thumbs.db
 desktop.ini
 FINSPARK_PROJECT_CONTEXT.md
+test_nvidia.py
