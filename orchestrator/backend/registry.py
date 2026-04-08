@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from .vector_store import upsert_adapter_profile
+
 # Path to the registry file
 REGISTRY_PATH = Path(__file__).parent.parent / "data" / "integration_registry.json"
 
@@ -174,6 +176,10 @@ def add_adapter(entry: dict) -> RegistryResult:
         entry["created_at"] = datetime.now(timezone.utc).isoformat()
         adapters.append(entry)
         _write_registry(registry)
+
+        # Convert this new adapter to a vector and save it in ChromaDB
+        upsert_adapter_profile(entry)
+
         return RegistryResult(
             success=True,
             action="created",
@@ -197,6 +203,10 @@ def add_adapter(entry: dict) -> RegistryResult:
     entry["updated_at"] = datetime.now(timezone.utc).isoformat()
     adapters[existing_index] = entry
     _write_registry(registry)
+
+    # Re-embed the updated adapter to keep ChromaDB in sync
+    upsert_adapter_profile(entry)
+
     return RegistryResult(
         success=True,
         action="updated",

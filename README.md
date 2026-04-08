@@ -1,4 +1,4 @@
-# FinSpark — AI-Assisted Integration Orchestration Engine
+# AI-Assisted Integration Orchestration Engine (Ollama version)
 
 An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) documents — via text, PDF, or DOCX uploads — generates executable JSON configuration blueprints, simulates them against live APIs, and deploys them to a middleware gateway. All with zero manual coding.
 
@@ -16,20 +16,20 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
                                │ reads configs from
                                │ /middleware/configs/{tenant_id}/
                                │
-                        ┌──────────────────┐
-                        │  AI Orchestrator  │
-                        │ Backend: 8003     │
-                        │ Frontend: 5174    │
-                        │ (React + FastAPI  │
-                        │  + Ollama LLM)    │
-                        └──────────────────┘
+                        ┌───────────────────────────┐
+                        │      AI Orchestrator      │
+                        │ Backend: 8003             │
+                        │ Frontend: 5174            │
+                        │ (FastAPI + LangChain +    │
+                        │ ChromaDB RAG + Ollama)    │
+                        └───────────────────────────┘
 ```
 
 | Service | Role | Tech | Port |
 |---------|------|------|------|
 | **Main App** | Test UI — toggles for KYC/GST, sends requests to middleware | React + Vite | 5173 |
 | **Middleware** | Runtime gateway — reads JSON configs, transforms data, forwards to APIs | FastAPI | 8002 |
-| **AI Orchestrator** | The product — uploads SOW (text/PDF/DOCX), generates configs via LLM, simulates, and deploys | React + FastAPI + Ollama | 8003 (API), 5174 (UI) |
+| **AI Orchestrator** | The product — uploads SOW, uses ChromaDB RAG for discovery, generates configs via LangChain, simulates, and deploys | React + FastAPI + LangChain + ChromaDB | 8003 (API), 5174 (UI) |
 | **Mock APIs** | Simulates external KYC and GST services | FastAPI | 8004 |
 
 ---
@@ -38,8 +38,9 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
 
 - **Multi-format Input**: Paste text directly or upload PDF, DOCX, DOC, TXT, MD, and CSV files — or combine both
 - **Multiple File Upload**: Drag-and-drop multiple documents simultaneously — all content is merged and sent to the LLM
-- **AI-Powered Adapter Discovery**: Before generating a new config, the AI checks the adapter registry for existing profiles that match the SOW — avoiding duplicates and reusing existing adapters (Path A: existing, Path B: new)
-- **AI-Generated Configs**: The LLM reads SOW documents and produces middleware-ready JSON blueprints (no manual coding)
+- **RAG-Powered Adapter Discovery**: Uses ChromaDB and HuggingFace local embeddings (`all-MiniLM-L6-v2`) for semantic vector search, instantly retrieving the top 3 adapter matches to prevent context window overload.
+- **Agentic Generation (LangChain)**: Uses `with_structured_output()` and strict Pydantic models to guarantee 100% compliant JSON blueprint outputs.
+- **LangSmith Observability**: Complete tracing of prompt inputs, JSON outputs, tokens, and latency across the pipeline.
 - **Mandatory vs Optional Detection**: The AI classifies each integration service as mandatory or optional based on SOW business rules
 - **Scope Validation**: The AI rejects out-of-scope or impossible integrations with clear reasons and suggestions
 - **Live Simulation**: Test the generated config against real APIs before deploying — see the full request/response pipeline
@@ -58,7 +59,8 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
 - **Python 3.10+**
 - **Node.js 18+** and **npm**
 - **Ollama** installed and running ([ollama.com](https://ollama.com))
-- A pulled model (e.g., `ollama pull llama3`)
+- A pulled model supporting tools (e.g., `ollama pull llama3.2`)
+- **LangSmith API Key** (optional but highly recommended for tracing)
 
 ---
 
@@ -129,7 +131,13 @@ Create a `.env` file in the **project root** (`FinSpark_Proto_v1/.env`):
 ```env
 # LLM Configuration (Ollama is default — no key needed)
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
+OLLAMA_MODEL=llama3.2:latest
+
+# LangSmith Configuration (MLOps)
+LANGCHAIN_TRACING_V2=true
+LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
+LANGCHAIN_API_KEY="your_langsmith_key_here"
+LANGCHAIN_PROJECT="FinSpark_Orchestrator_v2"
 
 # Mock credentials (resolved by middleware at runtime)
 KYC_PROVIDER_KEY=dummy-kyc-key-12345
@@ -337,140 +345,26 @@ Response Logic:
 
 ## Switching LLM Providers
 
-The orchestrator defaults to **Ollama** (local). You can switch to any other provider by modifying `orchestrator/backend/llm_engine.py`.
+Because FinSpark uses **LangChain**, switching underlying models takes just two lines of code (no massive rewrites required!).
 
 ### Option 1: Ollama (Default — Local, Free)
+No changes needed. Ensure `llama3.2` is running via `ollama serve`.
 
-No changes needed. Just ensure Ollama is running:
+### Option 2: OpenAI / NVIDIA / Gemma (API Based)
+Install the LangChain plugin: `pip install langchain-openai`
+Add your key to `.env`: `OPENAI_API_KEY="..."`
 
-```bash
-ollama serve
-ollama pull llama3    # or any model you prefer
+Change the engine in `llm_engine.py`:
+```python
+from langchain_openai import ChatOpenAI
+
+llm = ChatOpenAI(
+    model="gpt-4o-mini",          # Or "google/gemma-3n-e4b-it" 
+    base_url="https://api.openai.com/v1",  # Or "https://integrate.api.nvidia.com/v1"
+    api_key=os.getenv("OPENAI_API_KEY"),
+    temperature=0
+)
 ```
-
-Set in `.env`:
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3
-```
-
-### Option 2: Google Gemini
-
-1. **Get an API key** from [Google AI Studio](https://aistudio.google.com/apikey)
-
-2. **Install the SDK:**
-   ```bash
-   cd orchestrator
-   pip install google-generativeai
-   ```
-
-3. **Add to `.env`:**
-   ```env
-   GEMINI_API_KEY=your-gemini-api-key-here
-   ```
-
-4. **Replace the `process_sow` function** in `llm_engine.py`:
-
-   ```python
-   import google.generativeai as genai
-
-   genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-   async def process_sow(sow_text: str, model: Optional[str] = None) -> dict:
-       model_name = model or "gemini-2.0-flash"
-
-       llm = genai.GenerativeModel(
-           model_name=model_name,
-           system_instruction=SYSTEM_PROMPT,
-           generation_config=genai.GenerationConfig(
-               response_mime_type="application/json",
-               temperature=0.1,
-           ),
-       )
-
-       user_prompt = f"""Read the following SOW document and generate the blueprint and catalog_entry.
-
-   --- START OF SOW DOCUMENT ---
-   {sow_text}
-   --- END OF SOW DOCUMENT ---
-
-   Return ONLY a JSON object with "blueprint" and "catalog_entry" keys."""
-
-       try:
-           response = llm.generate_content(user_prompt)
-           raw_content = response.text
-       except Exception as e:
-           return {
-               "success": False,
-               "error": f"Gemini API error: {str(e)}",
-               "blueprint": None, "catalog_entry": None, "raw_response": None,
-           }
-
-       # Use the same extraction + validation logic below...
-       parsed = _extract_json_from_response(raw_content)
-       # (keep all existing validation code unchanged)
-   ```
-
-   > **Key advantage:** Gemini supports `response_mime_type="application/json"` which forces JSON output natively, just like Ollama's `"format": "json"`.
-
-### Option 3: OpenAI (GPT-4o / GPT-4o-mini)
-
-1. **Get an API key** from [platform.openai.com](https://platform.openai.com/api-keys)
-
-2. **Install the SDK:**
-   ```bash
-   cd orchestrator
-   pip install openai
-   ```
-
-3. **Add to `.env`:**
-   ```env
-   OPENAI_API_KEY=sk-your-openai-key-here
-   ```
-
-4. **Replace the `process_sow` function** in `llm_engine.py`:
-
-   ```python
-   from openai import AsyncOpenAI
-
-   client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-   async def process_sow(sow_text: str, model: Optional[str] = None) -> dict:
-       model_name = model or "gpt-4o-mini"
-
-       user_prompt = f"""Read the following SOW document and generate the blueprint and catalog_entry.
-
-   --- START OF SOW DOCUMENT ---
-   {sow_text}
-   --- END OF SOW DOCUMENT ---
-
-   Return ONLY a JSON object with "blueprint" and "catalog_entry" keys."""
-
-       try:
-           response = await client.chat.completions.create(
-               model=model_name,
-               messages=[
-                   {"role": "system", "content": SYSTEM_PROMPT},
-                   {"role": "user", "content": user_prompt},
-               ],
-               response_format={"type": "json_object"},
-               temperature=0.1,
-               max_tokens=4096,
-           )
-           raw_content = response.choices[0].message.content
-       except Exception as e:
-           return {
-               "success": False,
-               "error": f"OpenAI API error: {str(e)}",
-               "blueprint": None, "catalog_entry": None, "raw_response": None,
-           }
-
-       # Use the same extraction + validation logic below...
-       parsed = _extract_json_from_response(raw_content)
-       # (keep all existing validation code unchanged)
-   ```
-
-   > **Key advantage:** OpenAI's `response_format={"type": "json_object"}` also forces JSON output.
 
 ### What Stays the Same Across All Providers
 

@@ -12,12 +12,21 @@ import os
 import json
 from typing import Optional
 
-import httpx
+# import httpx
+from ollama import AsyncClient
 
 from .registry import get_adapter_profiles_for_discovery
 
+from .vector_store import search_similar_adapters
+
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
+OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
+
+ollama_client = AsyncClient(
+    host=OLLAMA_BASE_URL,
+    headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None
+)
 
 DISCOVERY_PROMPT = """You are an adapter discovery engine for an enterprise integration middleware.
 
@@ -99,10 +108,26 @@ async def discover_adapter(
             "profiles_checked": 0,
         }
 
+    # RAG: Search ChromaDB for the Top 3 most semantically similar adapters to the SOW
+    try:
+        candidate_profiles = search_similar_adapters(sow_text=sow_text, top_k=3)
+    except Exception as e:
+        print(f"[DISCOVERY] ChromaDB search failed: {e}. Fallback to passing all profiles.")
+        candidate_profiles = profiles
+        
+    if not candidate_profiles:
+        return {
+            "path": "new",
+            "match_found": False,
+            "matched_adapter": None,
+            "reason": "Vector search returned no results.",
+            "profiles_checked": len(profiles),
+        }
+
     # 2. Build prompt
     user_prompt = f"""Here are the registered adapter Technical Profiles:
 
-{json.dumps(profiles, indent=2)}
+{json.dumps(candidate_profiles, indent=2)}
 
 Here is the SOW/BRD document to analyze:
 
@@ -112,40 +137,23 @@ Here is the SOW/BRD document to analyze:
 
 Determine if any existing adapter can handle this integration. Return the JSON result."""
 
-    # 3. Call Ollama
-    payload = {
-        "model": model_name,
-        "messages": [
-            {"role": "system", "content": DISCOVERY_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        "format": "json",
-        "stream": False,
-        "options": {
-            "temperature": 0.1,
-            "num_predict": 1024,
-        },
-    }
-
+    # 3. Call Ollama API
+    model_name = model or OLLAMA_MODEL
+    
     try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                f"{OLLAMA_BASE_URL}/api/chat",
-                json=payload,
-            )
-
-            if response.status_code != 200:
-                # Discovery failed — don't block, default to Path B
-                return {
-                    "path": "new",
-                    "match_found": False,
-                    "matched_adapter": None,
-                    "reason": f"Discovery call failed (HTTP {response.status_code}). Defaulting to new profile.",
-                    "profiles_checked": len(profiles),
-                }
-
-            data = response.json()
-            raw_content = data.get("message", {}).get("content", "")
+        response = await ollama_client.chat(
+            model=model_name,
+            messages=[
+                {"role": "system", "content": DISCOVERY_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            format="json",
+            options={
+                "temperature": 0.1,
+                "num_predict": 1024,
+            }
+        )
+        raw_content = response.get('message', {}).get('content', '')
 
     except Exception as e:
         # If Ollama fails for discovery, don't block generation

@@ -5,3 +5,13 @@ python-dotenv
 PyPDF2
 python-docx
 python-multipart
+langchain
+langchain-community
+langchain-chroma
+langchain-ollama
+langchain-openai
+langgraph
+chromadb
+sentence-transformers
+langsmith
+pydantic

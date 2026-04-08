@@ -12,7 +12,7 @@ from .text_extractor import extract_text_from_file, combine_texts
 from .adapter_discovery import discover_adapter
 from .audit import log_event, get_recent_events
 
-env_path = Path(__file__).parent.parent / ".env"
+env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(env_path)
 
 app = FastAPI(
