@@ -2,7 +2,8 @@ import os
 import json
 from pathlib import Path
 from langchain_chroma import Chroma
-from langchain_community.embeddings import HuggingFaceEmbeddings
+# from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Define where ChromaDB will save its data locally
 CHROMA_PERSIST_DIR = Path(__file__).parent.parent / "data" / "chromadb"

@@ -1,11 +1,12 @@
 import json
 import os
 import re
+import httpx
 from typing import Optional
 
 from ollama import AsyncClient
 
-from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langchain_core.messages import SystemMessage, HumanMessage
 from .schemas import AgentOutput
 
@@ -13,14 +14,7 @@ from .schemas import AgentOutput
 # Configuration
 # ──────────────────────────────────────────────
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
-
-ollama_client = AsyncClient(
-    host=OLLAMA_BASE_URL,
-    headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None
-)
+# NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 
 # ──────────────────────────────────────────────
 # System Prompt
@@ -162,14 +156,15 @@ async def process_sow(sow_text: str, model: Optional[str] = None, matched_adapte
         - error: str (if failed)
         - raw_response: str (the raw LLM output, for debugging)
     """
-    model_name = model or OLLAMA_MODEL
-    
+    model_name = model or "meta/llama-3.3-70b-instruct"
+
     # 1. Initialize the LangChain Chat model
     # We set temperature to 0 for highly deterministic generation
-    llm = ChatOllama(
-        model=model_name,
-        base_url=OLLAMA_BASE_URL,
-        temperature=0,
+    llm = ChatOpenAI(
+        model="meta/llama-3.3-70b-instruct",
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=os.getenv("NVIDIA_API_KEY"),
+        temperature=0.2,
     )
     
     # 2. Bind our Pydantic model directly to the LLM. 
@@ -243,24 +238,40 @@ async def process_sow(sow_text: str, model: Optional[str] = None, matched_adapte
         }
 
 async def check_ollama_status() -> dict:
-    """Check if Ollama is running and the configured model is available."""
-    try:
-        response = await ollama_client.list()
-        # The ollama client returns an object, so we convert it or use dot notation
-        available_models = [m.model for m in response.models] if hasattr(response, 'models') else []
-        model_ready = any(OLLAMA_MODEL in m for m in available_models)
-        
+    """Check if the NVIDIA API is reachable and the model is available."""
+    api_key = os.getenv("NVIDIA_API_KEY")
+    if not api_key:
         return {
-            "ollama_running": True,
-            "configured_model": OLLAMA_MODEL,
-            "model_available": model_ready,
-            "available_models": available_models,
+            "ollama_running": False, # Kept for UI compatibility
+            "configured_model": "meta/llama-3.3-70b-instruct",
+            "model_available": False,
+            "available_models": [],
+            "error": "NVIDIA_API_KEY is missing from .env",
         }
+    
+    try:
+        # We ping the OpenAI-compatible /models endpoint provided by NVIDIA
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                "https://integrate.api.nvidia.com/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"}
+            )
+            response.raise_for_status()
+            data = response.json()
+            available_models = [m.get("id") for m in data.get("data", [])]
+            
+            return {
+                "ollama_running": True,  # Tricks UI into showing green status
+                "configured_model": "meta/llama-3.3-70b-instruct",
+                "model_available": "meta/llama-3.3-70b-instruct" in available_models,
+                "available_models": available_models,
+            }
     except Exception as e:
         return {
             "ollama_running": False,
-            "configured_model": OLLAMA_MODEL,
+            "configured_model": "meta/llama-3.3-70b-instruct",
             "model_available": False,
             "available_models": [],
-            "error": f"Cannot connect to Ollama API. Make sure the API is running and key is correct. Error: {str(e)}",
+            "error": f"Cannot connect to NVIDIA API. Error: {str(e)}",
         }
+

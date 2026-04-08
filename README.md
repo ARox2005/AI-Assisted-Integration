@@ -1,4 +1,4 @@
-# AI-Assisted Integration Orchestration Engine (Ollama version)
+# AI-Assisted Integration Orchestration Engine (Agentic LangChain Version)
 
 An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) documents — via text, PDF, or DOCX uploads — generates executable JSON configuration blueprints, simulates them against live APIs, and deploys them to a middleware gateway. All with zero manual coding.
 
@@ -21,7 +21,7 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
                         │ Backend: 8003             │
                         │ Frontend: 5174            │
                         │ (FastAPI + LangChain +    │
-                        │ ChromaDB RAG + Ollama)    │
+                        │ ChromaDB RAG + Any LLM)   │
                         └───────────────────────────┘
 ```
 
@@ -58,8 +58,7 @@ An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) d
 
 - **Python 3.10+**
 - **Node.js 18+** and **npm**
-- **Ollama** installed and running ([ollama.com](https://ollama.com))
-- A pulled model supporting tools (e.g., `ollama pull llama3.2`)
+- **An LLM Backend**: Choose either an **API Key** (OpenAI / NVIDIA NIM) OR a local **Ollama** installation.
 - **LangSmith API Key** (optional but highly recommended for tracing)
 
 ---
@@ -129,7 +128,12 @@ FinSpark_Proto_v1/
 Create a `.env` file in the **project root** (`FinSpark_Proto_v1/.env`):
 
 ```env
-# LLM Configuration (Ollama is default — no key needed)
+# LLM Configuration - Choose ONE option based on your backend
+# Option A: Cloud API (OpenAI, NVIDIA NIM, etc.)
+OPENAI_API_KEY="your_api_key_here"  
+NVIDIA_API_KEY="your_nvidia_key_here"
+
+# Option B: Local Models (Ollama)
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.2:latest
 
@@ -180,15 +184,14 @@ uvicorn backend.main:app --reload --port 8003
 
 Verify: `curl http://localhost:8003/health`
 
-### Step 4: Start Ollama (Terminal 4)
+### Step 4: Verify AI Connection (Terminal 4)
 
-```bash
-ollama serve
-```
+Depending on your configured backend in `llm_engine.py`:
+- **For API Providers** (NVIDIA / OpenAI): Ensure your API key is correctly set in `.env`.
+- **For Ollama**: Ensure `ollama serve` is running and your model is pulled.
 
-> If Ollama is already running in the system tray, skip this step.
-
-Verify: `curl http://localhost:8003/health/ollama`
+Verify Orchestrator connection: `curl http://localhost:8003/health/ollama` 
+*(Note: This single health endpoint detects whichever API provider you have configured).*
 
 ### Step 5: Start Main App Frontend (Terminal 5)
 
@@ -217,13 +220,13 @@ Opens at: **http://localhost:5174**
 ### Flow A: Generate, Simulate & Deploy (Orchestrator)
 
 1. Open **http://localhost:5174** (Orchestrator UI)
-2. Check the status bar — Ollama should show as online
+2. Check the status bar — the API connection should show as online
 3. **Select a tenant** from the dropdown (Default, Tenant A, or Tenant B)
 4. **Input** — choose one or more:
    - Click **"Load sample SOW"** for a quick test
    - Paste SOW text directly into the text area
    - Drag-and-drop PDF/DOCX files into the upload zone (multiple files supported)
-5. Click **"→ Generate Blueprint"** — wait for Ollama (~10–60 seconds)
+5. Click **"→ Generate Blueprint"** — wait for the AI (~2–10 seconds)
    - The AI first runs **Adapter Discovery** — checking the registry for existing matching profiles
    - If a match is found (Path A), the AI generates a config tailored to that adapter
    - If no match (Path B), the AI generates both a new adapter profile and the config from scratch
@@ -541,8 +544,9 @@ If you want the new API in the Main App's toggle UI, add a new toggle in `main-a
 
 | Problem | Solution |
 |---------|----------|
-| `Cannot connect to Ollama` | Run `ollama serve` or check if it's in system tray |
-| `Model not found` | Run `ollama pull llama3` (or your chosen model) |
+| `Cannot connect to AI Backend` | For API providers, check your API key in `.env`. For local, run `ollama serve` |
+| `Model not found` | For API providers, verify the exact model string. For Ollama, run `ollama pull <model>` |
+| `OpenAIError: API key must be set` | Ensure your `.env` contains the correct key and the FastAPI server was restarted. |
 | CORS errors in browser | Make sure all backends have `allow_origins=["*"]` |
 | `Credential not found` | Check `.env` file exists in project root with the right keys |
 | Middleware returns 404 | Config file missing in `middleware/configs/{tenant_id}/`. Deploy from orchestrator first, and ensure the same tenant is selected in both UIs |

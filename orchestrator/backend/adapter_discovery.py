@@ -12,21 +12,13 @@ import os
 import json
 from typing import Optional
 
-# import httpx
-from ollama import AsyncClient
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import SystemMessage, HumanMessage
 
 from .registry import get_adapter_profiles_for_discovery
-
 from .vector_store import search_similar_adapters
 
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY")
-
-ollama_client = AsyncClient(
-    host=OLLAMA_BASE_URL,
-    headers={"Authorization": f"Bearer {OLLAMA_API_KEY}"} if OLLAMA_API_KEY else None
-)
+# NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
 
 DISCOVERY_PROMPT = """You are an adapter discovery engine for an enterprise integration middleware.
 
@@ -94,7 +86,6 @@ async def discover_adapter(
         - matched_adapter: dict or None (name, version, confidence, reason)
         - profiles_checked: int
     """
-    model_name = model or OLLAMA_MODEL
 
     # 1. Get adapter profiles from registry
     profiles = get_adapter_profiles_for_discovery()
@@ -137,26 +128,27 @@ Here is the SOW/BRD document to analyze:
 
 Determine if any existing adapter can handle this integration. Return the JSON result."""
 
-    # 3. Call Ollama API
-    model_name = model or OLLAMA_MODEL
-    
+    model_name = model or "meta/llama-3.3-70b-instruct"
+
+    # 3. Call NVIDIA API via Langchain
     try:
-        response = await ollama_client.chat(
-            model=model_name,
-            messages=[
-                {"role": "system", "content": DISCOVERY_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            format="json",
-            options={
-                "temperature": 0.1,
-                "num_predict": 1024,
-            }
+        llm = ChatOpenAI(
+            model="meta/llama-3.3-70b-instruct",
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key=os.getenv("NVIDIA_API_KEY"),
+            temperature=0.1
         )
-        raw_content = response.get('message', {}).get('content', '')
+        
+        messages = [
+            SystemMessage(content=DISCOVERY_PROMPT),
+            HumanMessage(content=user_prompt)
+        ]
+        
+        # We don't use structured output here since we want raw JSON text to parse
+        response = await llm.ainvoke(messages)
+        raw_content = response.content
 
     except Exception as e:
-        # If Ollama fails for discovery, don't block generation
         return {
             "path": "new",
             "match_found": False,
@@ -164,6 +156,7 @@ Determine if any existing adapter can handle this integration. Return the JSON r
             "reason": f"Discovery unavailable ({str(e)}). Defaulting to new profile.",
             "profiles_checked": len(profiles),
         }
+
 
     # 4. Parse
     try:
