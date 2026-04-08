@@ -1,3 +1,12 @@
+---
+title: Aaoe Mock Api
+emoji: 🔥
+colorFrom: indigo
+colorTo: indigo
+sdk: docker
+pinned: false
+---
+
 # AI-Assisted Integration Orchestration Engine (Agentic LangChain Version)
 
 An enterprise-grade **design-time AI tool** that reads SOW (Statement of Work) documents — via text, PDF, or DOCX uploads — generates executable JSON configuration blueprints, simulates them against live APIs, and deploys them to a middleware gateway. All with zero manual coding.
